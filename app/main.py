@@ -58,3 +58,32 @@ async def websocket_endpoint(websocket: WebSocket):
             await manager.broadcast(f"Alert: {data}")
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+        @app.get("/api/v1/grid/status/{city_zone}")
+async def grid_status(city_zone: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        text("""
+            SELECT city_zone,
+                   AVG(voltage) as avg_voltage,
+                   COUNT(*) as total_readings,
+                   MAX(timestamp) as last_reading
+            FROM meter_readings
+            WHERE city_zone = :zone
+            AND timestamp > NOW() - INTERVAL '1 hour'
+            GROUP BY city_zone
+        """),
+        {"zone": city_zone}
+    )
+    row = result.mappings().first()
+    if not row:
+        return {"city_zone": city_zone, "status": "No data available"}
+    
+    avg_v = row["avg_voltage"]
+    status = "CRITICAL" if avg_v > 405 else "WARNING" if avg_v > 360 else "NORMAL"
+    
+    return {
+        "city_zone": city_zone,
+        "status": status,
+        "avg_voltage": round(avg_v, 2),
+        "total_readings": row["total_readings"],
+        "last_reading": row["last_reading"]
+    }
